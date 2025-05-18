@@ -47,7 +47,7 @@ with st.sidebar:
                 try:
                     # Initialisiert die Datenbankverbindung über die Backend-Funktion
                     # und speichert sie im Session State
-                    st.session_state.db = init_database(db_name_input)
+                    st.session_state.db = init_database()
                     st.success(f"Erfolgreich mit '{db_name_input}.db' verbunden!")
                     # Optional: Chat zurücksetzen oder eine Bestätigungsnachricht im Chat anzeigen
                     st.session_state.chat_history.append(AIMessage(content=f"Verbunden mit der Datenbank: {db_name_input}.db. Du kannst jetzt Fragen stellen."))

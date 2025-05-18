@@ -14,7 +14,7 @@ from langchain_openai import ChatOpenAI
 # oder falls das Backend als separater Service laufen würde.
 load_dotenv()
 
-def init_database(database_name: str) -> SQLDatabase:
+def init_database() -> SQLDatabase:
   """
   Initialisiert die Datenbankverbindung.
 
@@ -25,7 +25,7 @@ def init_database(database_name: str) -> SQLDatabase:
     Ein SQLDatabase-Objekt für die Datenbankinteraktion.
   """
   # Hier erstellen wir eine Verbindungs-URL für eine SQLite-Datenbank.
-  db_uri = f"sqlite:///./{database_name}.db"
+  db_uri = f"sqlite:///./AngeBot.db"
   # Wir erstellen ein SQLDatabase-Objekt, das später verwendet wird, um SQL-Queries abzuschicken.
   return SQLDatabase.from_uri(db_uri)
 
