@@ -1,67 +1,6 @@
-# Professur für Wirtschaftsinformatik
-# Prof. Dr. Manfred Schoch
-# Lehrveranstaltung Solution Architecture
-
-
-# Vorbereitende Schritte:
-# - Schritt 1: Installiere SQLite3 auf Windows gemäß folgendem kurzen Tutorial: https://www.youtube.com/watch?v=L3FwRRx6bqo
-# - Schritt 2: Öffne in Visual Studio Code ein Terminal ("Terminal - New Terminal")
-# - Schritt 3: Gebe folgenden Befehl ein, um das "virtual Environment" zu aktivieren: 
-#     - Windows: .venv\Scripts\activate.bat
-#     - Mac: source .venv/bin/activate
 # - Technischer Hinweis: Der Quellcode der App kann jederzeit mittels "streamlit run app.py" gestartet werden. 
 #   Danach ist die App unter der URL "http://localhost:8501/" erreichbar. 
-#   Solltest du Änderungen am Code vorgenommen haben, könnst du sie diese durch einen Rerun "⁝ - Rerun (R)" (in der Oberfläche rechts oben) ansehen
 
-
-# Genereller Workflow der SQL-Chatbot-Anwendung in dieser Lehreinheit
-
-# +-----------------------------+
-# |   User stellt eine Frage    |
-# |    (Streamlit Chat-Input)   |
-# +-------------+---------------+
-#               |
-#               v
-# +-----------------------------+
-# | Frage wird zur Chat-Historie|
-# |      hinzugefügt            |
-# +-------------+---------------+
-#               |
-#               v
-# +-----------------------------+
-# |  SQL-Query wird generiert   |
-# |  (LangChain SQL Chain)      |
-# +-------------+---------------+
-#               |
-#               v
-# +-----------------------------+
-# |  SQL-Query wird ausgeführt  |
-# |    (SQLite Datenbank)       |
-# +-------------+---------------+
-#               |
-#               v
-# +-----------------------------+
-# | Antwort wird formuliert     |
-# | (LangChain Antwort-Chain mit|
-# |  OpenAI)                    |
-# +-------------+---------------+
-#               |
-#               v
-# +-----------------------------+
-# |   Antwort wird angezeigt    |
-# |  (Streamlit Chat-Ausgabe)   |
-# +-----------------------------+
-
-# WICHTIG: Dieser Ablauf wird automatisch durch den Aufbau der Streamlit-App gesteuert.
-# Die Benutzerinteraktion startet den Fluss – danach arbeitet Langchain und die Datenbank zusammen.
-
-# Fazit: Das System verbindet Streamlit (Frontend), LangChain (KI-Logik) und SQLite (Datenbank)
-# zu einem vollständigen kleinen KI-gestützten Chatbot für Datenbankabfragen!
-# Eine detaillierte Anleitung zur App finden Sie hier: https://www.youtube.com/watch?v=9ccl1_Wu24Q
-
-# Wichtige Pakete werden importiert.
-# Diese Pakete helfen uns beim Umgang mit Umgebungsvariablen, Datenbanken, 
-# KI und bei der Gestaltung der Benutzeroberfläche.
 
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
