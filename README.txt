@@ -1,0 +1,1 @@
+Um die Anwendung zu starten streamlit run frontend.py im Terminal eingeben. 
