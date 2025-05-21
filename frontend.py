@@ -1,5 +1,10 @@
 # frontend.py
 # Diese Datei enthält den Streamlit-Code für die Benutzeroberfläche der Chat-Anwendung.
+# Technischer Hinweis für den Benutzer:
+# Der Quellcode der App kann jederzeit mittels "streamlit run frontend.py" gestartet werden.
+# Danach ist die App unter der URL "http://localhost:8501/" erreichbar.
+# Stellen Sie sicher, dass auch die Datei backend.py im selben Verzeichnis liegt
+# und eine .env Datei mit Ihrem OPENAI_API_KEY existiert.
 
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage # Wird für die Chat-Historie benötigt
@@ -10,12 +15,6 @@ except ImportError:
     st.error("Fehler: backend.py konnte nicht gefunden werden. Stellen Sie sicher, dass sich die Datei im selben Verzeichnis befindet.")
     # Beenden Sie die App, wenn das Backend nicht importiert werden kann, um weitere Fehler zu vermeiden.
     st.stop() 
-
-# Technischer Hinweis für den Benutzer:
-# Der Quellcode der App kann jederzeit mittels "streamlit run frontend.py" gestartet werden.
-# Danach ist die App unter der URL "http://localhost:8501/" erreichbar.
-# Stellen Sie sicher, dass auch die Datei backend.py im selben Verzeichnis liegt
-# und eine .env Datei mit Ihrem OPENAI_API_KEY existiert.
 
 # Grundkonfiguration der Webseite (Titel und Icon)
 st.set_page_config(page_title="Chat with SQLite", page_icon=":speech_balloon:")

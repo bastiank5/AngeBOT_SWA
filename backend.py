@@ -62,7 +62,7 @@ def get_sql_chain(db: SQLDatabase):
     3.  Filter supermarkets to be in the user's city (`UserInfo.City` = `Supermarkets.City`).
     4.  If the user mentions preferences like "Bio" or "nachhaltig" (check `UserInfo.Goal` or the question), try to filter `Products` using `Category` or `ProductName LIKE '%Bio%'`.
     5.  If multiple ingredients are requested for a recipe, you might need to query for each or structure the query to show options per ingredient. Sometimes, finding all ingredients in one store is preferred, other times the cheapest option per ingredient across multiple stores is better. Use the context.
-    6.  Assume a specific `UserID` is provided or can be inferred for accessing `UserInfo`. For the purpose of this query generation, you can use a placeholder like `'{user_id}'` if needed, which would be replaced later. (Alternatively, if user profile data is passed directly into the prompt context, use that).
+    6.  Assume a specific `UserID` is provided or can be inferred for accessing `UserInfo`.
 
     Conversation History: {chat_history}
     User's Question: {question}
@@ -71,7 +71,7 @@ def get_sql_chain(db: SQLDatabase):
 
     Example Scenario:
 
-    Question: Ich brauche Zutaten für Spaghetti Carbonara. Wo finde ich das am günstigsten? Mein UserID ist 7.
+    Question: Ich brauche Zutaten für Spaghetti Carbonara. Wo finde ich das am günstigsten?
     User City: Berlin
     User Transport Mode: ÖPNV
     User Shopping Goal: preisgünstig einkaufen
