@@ -2,10 +2,23 @@ import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 from dotenv import load_dotenv
 import sqlite3
-from utils import get_response # Assuming get_response will be in utils.py
+from backend import get_response, init_database
 
 st.set_page_config(page_title="AngeBOT", page_icon="🛒")
 load_dotenv()
+
+# === DATABASE INITIALIZATION ===
+# Initialize db using the function from backend.py
+# This should be done once, ideally when the session starts.
+if "db" not in st.session_state or st.session_state.db is None:
+    try:
+        st.session_state.db = init_database() # Call init_database here
+        # You might want to add a log or a success message here for debugging
+        # st.toast("Datenbank erfolgreich initialisiert!")
+    except Exception as e:
+        st.error(f"Fehler bei der Datenbankinitialisierung: {e}")
+        # Stop the app or handle the error as appropriate
+        st.stop()
 
 # === SQLite INIT ===
 conn = sqlite3.connect("AngeBot.db", check_same_thread=False)

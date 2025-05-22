@@ -36,29 +36,13 @@ def get_sql_chain(db: SQLDatabase, model_name: str):
 
   Args:
     db: Das SQLDatabase-Objekt.
-    model_name: Das zu verwendende KI-Modell.
 
   Returns:
     Eine Langchain-Kette, die SQL-Abfragen generiert.
   """
   # Hier definieren wir eine Vorlage {template} für den Chatbot:
   # Der Chatbot soll auf Basis der existierenden Datenbankstruktur {schema} SQL-Abfragen generieren.
-  # user_info wird als Dictionary erwartet.
-  # template = """
-  #   You are an AI assistant specialized in helping users with their grocery shopping for cooking recipes.
-  #   Based on the provided database schema, the user's question, and their profile information (user_info: {user_info}), write a SQL query to find the necessary information.
-  #   The user will typically mention a recipe or a list of ingredients. Your primary goal is to find where these ingredients can be purchased, ideally at the best price, considering supermarkets in the user's city (user_info['city']).
-  #   If user_info['preferences'] contains 'Bio' or 'organic', prioritize organic products.
-  #   If user_info['budget'] is relevant, consider it.
-
-  #   <SCHEMA>{schema}</SCHEMA>
-
-  #   Conversation History: {chat_history}
-  #   User Info: {user_info}
-  #   User's Question: {question}
-
-  #   Write only the SQL query and nothing else. Do not wrap the SQL query in any other text, not even backticks.
-  #   """
+  # users wird als Dictionary erwartet.
   template = """
     You are an AI assistant specialized in helping users with their grocery shopping for cooking recipes.
     Based on the provided database schema, the user's question, and their profile information (especially their city: {user_city}, transport preferences: {user_transport_mode}, and shopping goals like '{user_goal}'), write a SQL query to find the necessary information.
@@ -76,7 +60,7 @@ def get_sql_chain(db: SQLDatabase, model_name: str):
 
     Conversation History: {chat_history}
     User's Question: {question}
-    User Info: {user_info} # Full user_info dictionary for context
+    User Info: {users} # Full users dictionary for context
 
     Write only the SQL query and nothing else. Do not wrap the SQL query in any other text, not even backticks.
 
@@ -117,17 +101,17 @@ def get_sql_chain(db: SQLDatabase, model_name: str):
   return (
     RunnablePassthrough.assign(
         schema=get_schema, # Fügt den Datenbankschema hinzu
-        # Extrahiert spezifische User-Infos für den Prompt; user_info selbst ist schon im Input-Dict
-        user_city=lambda x: x['user_info'].get('city', 'Unknown'),
-        user_transport_mode=lambda x: ", ".join(x['user_info'].get('transport', [])) if isinstance(x['user_info'].get('transport', []), list) else x['user_info'].get('transport', 'Unknown'),
-        user_goal=lambda x: x['user_info'].get('preferences', 'Unknown') # Annahme: 'preferences' mappt zu 'goal'
+        # Extrahiert spezifische User-Infos für den Prompt; users selbst ist schon im Input-Dict
+        user_city=lambda x: x['users'].get('city', 'Unknown'),
+        user_transport_mode=lambda x: ", ".join(x['users'].get('transport', [])) if isinstance(x['users'].get('transport', []), list) else x['users'].get('transport', 'Unknown'),
+        user_goal=lambda x: x['users'].get('preferences', 'Unknown') # Annahme: 'preferences' mappt zu 'goal'
     )
     | prompt # Erhält das Dictionary mit schema, user_city, user_transport_mode, user_goal und den ursprünglichen Eingaben
     | llm
     | StrOutputParser()
   )
 
-def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_name: str, user_info: dict):
+def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_name: str, users: dict):
   """
   Generiert eine vollständige, natürliche Antwort für den Benutzer.
 
@@ -136,14 +120,14 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
     db: Das SQLDatabase-Objekt.
     chat_history: Die bisherige Konversationshistorie.
     model_name: Das zu verwendende KI-Modell (z.B. "gpt-3.5-turbo" oder "gpt-4").
-    user_info: Ein Dictionary mit Benutzerinformationen.
+    users: Ein Dictionary mit Benutzerinformationen.
 
   Returns:
     Eine textuelle Antwort für den Benutzer.
   """
   # Zuerst holen wir uns die SQL-Chain (also die Chain, die SQL-Queries generiert)
-  # model_name und user_info werden hier benötigt, damit sql_chain sie verwenden kann
-  sql_chain = get_sql_chain(db, model_name) # user_info wird implizit durch den invoke Aufruf weitergegeben
+  # model_name und users werden hier benötigt, damit sql_chain sie verwenden kann
+  sql_chain = get_sql_chain(db, model_name) # users wird implizit durch den invoke Aufruf weitergegeben
   
   # In diesem Prompt-Template geht es nicht mehr darum, eine SQL-Abfrage zu erstellen, sondern darum, 
   # eine nette, natürliche Antwort in Textform zu formulieren.
@@ -152,8 +136,8 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
     You are a friendly and helpful AI assistant for cooking and grocery shopping, communicating in German with a Swabian accent.
     Your goal is to provide comprehensive feedback to the user about their recipe inquiry. This includes:
     1.  Listing the required ingredients.
-    2.  Identifying where these ingredients can be purchased most affordably, by comparing supermarkets in the user's vicinity (user_info['city']).
-    3.  Suggesting the "best way" to get to one or more supermarkets, considering the user's stated transport preferences (user_info['transport']) and other parameters (e.g., budget from user_info['budget'], desire for organic products from user_info['preferences'], accessibility needs if mentioned).
+    2.  Identifying where these ingredients can be purchased most affordably, by comparing supermarkets in the user's vicinity (users['city']).
+    3.  Suggesting the "best way" to get to one or more supermarkets, considering the user's stated transport preferences (users['transport']) and other parameters (e.g., budget from users['budget'], desire for organic products from users['preferences'], accessibility needs if mentioned).
 
     You have been provided with the user's question, the SQL query you generated, and the results from the database. You also have access to the user's profile information.
 
@@ -161,12 +145,12 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
     <SCHEMA>{schema}</SCHEMA>
 
     User's Profile:
-    Name: {user_info[name]}
-    City: {user_info[city]}
-    Transport Options: {user_info[transport]}
-    Preferences / Allergies: {user_info[preferences]}
-    Budget: {user_info[budget]} €
-    Full User Info (for AI context): {user_info}
+    Name: {users[name]}
+    City: {users[city]}
+    Transport Options: {users[transport]}
+    Preferences / Allergies: {users[preferences]}
+    Budget: {users[budget]} €
+    Full User Info (for AI context): {users}
 
 
     User's Original Question: {question}
@@ -194,7 +178,7 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
     -   **Actionable Advice:** End with a helpful summary or next step.
 
     Beispiel für eine gute Antwortstruktur:
-    "Hallo {user_info[name]}!
+    "Hallo {users[name]}!
     Für dein Rezept '[Rezeptname]' habe ich folgende Informationen gefunden:
 
     **Zutaten und Preise:**
@@ -205,11 +189,11 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
         * Am günstigsten bei [Supermarkt C] ([Adresse C]) für [Preis] €.
 
     **Meine Empfehlung für dich:**
-    Da du z.B. '{user_info[transport]}' nutzt, empfehle ich dir:
+    Da du z.B. '{users[transport]}' nutzt, empfehle ich dir:
     * Option 1: Wenn du alles in einem Laden kaufen möchtest, wäre [Supermarkt X] eine gute Wahl, dort bekommst du [Zutatenliste] für insgesamt [Gesamtpreis, falls sinnvoll].
     * Option 2: Um maximal zu sparen, könntest du [Zutat 1] bei [Supermarkt A] und [Zutat 2] bei [Supermarkt C] kaufen. [Supermarkt A] in der [Straße A] ist [Hinweis zur Erreichbarkeit]. [Supermarkt C] erreichst du gut [Hinweis basierend auf TransportMode].
 
-    Beachte auch dein Ziel '{user_info[preferences]}': Die genannten Produkte von [Supermarkt A] sind als Bio gekennzeichnet. Dein Budget liegt bei {user_info[budget]}€.
+    Beachte auch dein Ziel '{users[preferences]}': Die genannten Produkte von [Supermarkt A] sind als Bio gekennzeichnet. Dein Budget liegt bei {users[budget]}€.
 
     Lass mich wissen, wenn du weitere Fragen hast!"
 
@@ -224,17 +208,17 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
   # Chain wird hier zusammengebaut:
   # Die Eingabe für diese Kette ist das Dictionary von chain.invoke().
   # sql_chain erhält dieses Dictionary ebenfalls.
-  # user_info und model_name sind also im Kontext für alle Teile der Kette verfügbar,
+  # users und model_name sind also im Kontext für alle Teile der Kette verfügbar,
   # die sie aus dem weitergegebenen Dictionary lesen.
   chain = (
     RunnablePassthrough.assign(
         schema=lambda _: db.get_table_info(),
-        query=sql_chain, # sql_chain erhält das input dict {question, chat_history, user_info, model_name}
-        user_info=lambda x: x['user_info'] # Stellt sicher, dass user_info für den finalen Prompt explizit verfügbar ist
+        query=sql_chain, # sql_chain erhält das input dict {question, chat_history, users, model_name}
+        users=lambda x: x['users'] # Stellt sicher, dass users für den finalen Prompt explizit verfügbar ist
     ).assign(
-      response=lambda x: db.run(x["query"]), # x enthält hier query, schema, user_info und die ursprünglichen inputs
+      response=lambda x: db.run(x["query"]), # x enthält hier query, schema, users und die ursprünglichen inputs
     )
-    | prompt # prompt erhält das dict mit question, chat_history, user_info, model_name, query, schema, response
+    | prompt # prompt erhält das dict mit question, chat_history, users, model_name, query, schema, response
     | llm
     | StrOutputParser()
   )
@@ -244,7 +228,7 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
   return chain.invoke({
     "question": user_query,
     "chat_history": chat_history,
-    "user_info": user_info, 
+    "users": users, 
     "model_name": model_name 
   })
 
@@ -275,8 +259,8 @@ if __name__ == "__main__":
         test_user_query = "Ich brauche Zutaten für Spaghetti Carbonara. Wo finde ich das am günstigsten?"
         print(f"\nTestfrage: {test_user_query}")
 
-        # Beispiel user_info für den Test
-        test_user_info = {
+        # Beispiel users für den Test
+        test_users = {
             "name": "Max Mustermann",
             "city": "Berlin",
             "preferences": "Bio", # z.B. 'Bio', 'preisgünstig', 'vegan'
@@ -293,7 +277,7 @@ if __name__ == "__main__":
         else:
             try:
                 # model_name hier als Beispiel "gpt-3.5-turbo" oder "gpt-4" verwenden
-                response = get_response(test_user_query, db_instance, test_chat_history, "gpt-3.5-turbo", test_user_info)
+                response = get_response(test_user_query, db_instance, test_chat_history, "gpt-3.5-turbo", test_users)
                 print("\nAntwort vom Backend:")
                 print(response)
             except Exception as e:
