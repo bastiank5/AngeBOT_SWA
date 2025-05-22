@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_community.utilities import SQLDatabase
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
+import re
 
 load_dotenv()
 
@@ -14,6 +15,22 @@ def init_database() -> SQLDatabase:
   db_uri = f"sqlite:///./AngeBot.db"
   return SQLDatabase.from_uri(db_uri)
 
+def clean_sql_query(query: str) -> str:
+    """
+    Entfernt Markdown-Code-Blöcke und andere unerwünschte Formatierungen aus SQL-Queries
+    """
+    # Entferne ```sql und ``` Blöcke
+    query = re.sub(r'```sql\s*', '', query, flags=re.IGNORECASE)
+    query = re.sub(r'```\s*$', '', query, flags=re.MULTILINE)
+    query = re.sub(r'```', '', query)
+    
+    # Entferne führende/nachfolgende Leerzeichen und Zeilenumbrüche
+    query = query.strip()
+    
+    # Entferne mehrfache Leerzeichen/Zeilenumbrüche
+    query = re.sub(r'\s+', ' ', query)
+    
+    return query
 
 def get_sql_chain(db: SQLDatabase, model_name: str):
   template = """
@@ -24,18 +41,19 @@ def get_sql_chain(db: SQLDatabase, model_name: str):
     <SCHEMA>{schema}</SCHEMA>
 
     Guidelines for SQL Query Generation:
-    1.  Prioritize finding products (`ProductName`) mentioned by the user from the `Products` table.
-    2.  Compare prices (`Price`) across different supermarkets (`Supermarkets`).
-    3.  Filter supermarkets to be in the user's city. For example, if user_city is 'Berlin', use `WHERE Supermarkets.City = 'Berlin'`.
-    4.  If the user mentions preferences like "Bio" or "nachhaltig" (check user_goal or the question), try to filter `Products` using `Category` or `ProductName LIKE '%Bio%'`.
-    5.  If multiple ingredients are requested for a recipe, you might need to query for each or structure the query to show options per ingredient. Sometimes, finding all ingredients in one store is preferred, other times the cheapest option per ingredient across multiple stores is better. Use the context.
-    6.  Assume a specific `UserID` is provided or can be inferred for accessing `UserInfo` (though `UserInfo` table itself is not directly used for filtering products here, but general user context).
+    1.  Prioritize finding products (ProductName) mentioned by the user from the Products table. When searching for product names based on user input, use the LIKE operator with wildcards (e.g., p.ProductName LIKE '%ingredient_name%') to find products that contain the mentioned ingredient name. This is more flexible than exact matching and helps find variations of a product (e.g., searching for 'Mozzarella' should find 'Bio Mozzarella', 'Mozzarella di Bufala', etc.).
+    2.  Compare prices (Price) across different supermarkets (Supermarkets).,
+    3. Filter supermarkets to be in the user's city. For example, if user_city is 'Berlin', use WHERE Supermarkets.City = 'Berlin'.,
+    4. If the user mentions preferences like "Bio" or "nachhaltig" (check user_goal or the question), try to filter Products using Category = 'Bio' or by adding conditions like p.ProductName LIKE '%Bio%' or p.Description LIKE '%nachhaltig%'.,
+    5. If multiple ingredients are requested for a recipe, you will need to construct a condition that finds products matching any of these ingredients. For example, if the user needs 'Mozzarella' and 'Tomaten', the condition might be (p.ProductName LIKE '%Mozzarella%' OR p.ProductName LIKE '%Tomaten%'). When listing multiple ingredients for a recipe like Spaghetti Carbonara, list them similarly using OR conditions for each ingredient sought with LIKE.,
+    6. Assume a specific UserID is provided or can be inferred for accessing UserInfo (though UserInfo table itself is not directly used for filtering products here, but general user context).,
+    7. Ensure products are in stock, e.g., AND p.InStock > 0.
 
     Conversation History: {chat_history}
     User's Question: {question}
     User Info: {user_info} # Full user_info dictionary for context
 
-    Write only the SQL query and nothing else. Do not wrap the SQL query in any other text, not even backticks.
+    IMPORTANT: Write ONLY the SQL query. Do NOT use markdown code blocks, backticks, or any other formatting. Return the raw SQL query only.
 
     Example Scenario:
 
@@ -47,13 +65,20 @@ def get_sql_chain(db: SQLDatabase, model_name: str):
     SELECT p.ProductName, p.Price, s.Name AS SupermarketName, s.Address
     FROM Products p
     JOIN Supermarkets s ON p.SupermarketID = s.SupermarketID
-    WHERE s.City = 'Berlin' AND p.ProductName IN ('Spaghetti', 'Eier', 'Guanciale', 'Pecorino Romano') AND p.InStock > 0
+    WHERE s.City = 'Berlin'
+      AND (p.ProductName LIKE '%Spaghetti%' OR
+          p.ProductName LIKE '%Eier%' OR -- Catches 'Ei', 'Eier', 'Bio Eier', etc.
+          p.ProductName LIKE '%Guanciale%' OR
+          p.ProductName LIKE '%Pancetta%' OR -- Common substitute for Guanciale
+          p.ProductName LIKE '%Pecorino Romano%' OR
+          p.ProductName LIKE '%Pecorino%' OR -- Broader search for Pecorino
+          p.ProductName LIKE '%Parmesan%' OR p.ProductName LIKE '%Parmigiano Reggiano%') -- Common substitute for Pecorino
+      AND p.InStock > 0
     ORDER BY p.ProductName, p.Price ASC;
 
     Your turn:
 
     Question: {question}
-    SQL Query:
     """
   prompt = ChatPromptTemplate.from_template(template)
   llm = ChatOpenAI(model=model_name)
@@ -74,13 +99,9 @@ def get_sql_chain(db: SQLDatabase, model_name: str):
   )
 
 # Geänderte get_response Funktion
-def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_name: str, user_info_dict: dict): # Parameter umbenannt für Klarheit
+def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_name: str, user_info_dict: dict):
   sql_chain = get_sql_chain(db, model_name)
   
-  # Aktualisierter Template-String, der flache Schlüssel erwartet
-  # Annahme: Die Fehlermeldung "Expected: ... 'users[budget]'" bedeutet, dass
-  # Ihr Template tatsächlich Platzhalter wie {users_budget} (oder ähnlich flach) benötigt.
-  # Die `user_info` aus der SQL-Chain-Vorlage ist für den SQL-Prompt, nicht unbedingt für diesen finalen Antwort-Prompt.
   template_final_response = """
     You are a friendly and helpful AI assistant for cooking and grocery shopping, communicating in German with a Swabian accent.
     Your goal is to provide comprehensive feedback to the user about their recipe inquiry. This includes:
@@ -118,7 +139,7 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
         -   If `TransportMode` is 'Auto', suggest driving, mention if parking could be an issue (general knowledge, not from DB).
         -   If 'zu Fuß' or 'Fahrrad', highlight closer options if discernible, or mention it's good for local trips.
         -   If 'ÖPNV', suggest checking public transport routes to the supermarket's address.
-    -   **Splitting Purchases:** If ingredients are cheapest at different stores, explain this clearly. For example: "Die Nudeln sind bei Aldi (Adresse...) am günstigsten, während das Bio-Hackfleisch bei Rewe (Adresse...) preiswerter ist. Da du mit dem Auto unterwegs bist, könntest du beide Märkte anfahren. Alternativ, wenn du Zeit sparen möchtest, hat Edeka (Adresse...) beide Artikel, aber etwas teurer."
+    -   **Splitting Purchases:** If ingredients are cheapest at different stores, explain this clearly. For example: "Die Nudeln sind bei Aldi (Adresse...) am günstigsten, während das Bio-Hackfleisch bei Rewe (Adresse...) preiswerter ist. Da du mit dem Auto unterwegs bist, könntest du beide Märkte anfahren. Alternativ, wenn du Zeit sparen möchtest, hat Edeka (Adresse...) beide Artikel, aber etwas teuer."
     -   **User Goals:**
         -   If the user wants "Bio" or "nachhaltig", confirm if the found products meet this (based on `Category` or `ProductName`). If not, mention it.
         -   If the user has a `Budget`, you can comment if the total cost (if calculable) fits within it, or suggest cheaper alternatives if possible.
@@ -154,24 +175,19 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
   
   chain = (
     RunnablePassthrough.assign(
-        # Die SQL-Kette erwartet 'user_info' im Eingabe-Dictionary.
-        # Das Eingabe-Dictionary für chain.invoke() enthält 'user_info': user_info_dict.
         schema=lambda _: db.get_table_info(),
-        query=sql_chain, # sql_chain wird mit dem gesamten Eingabe-Dict von invoke aufgerufen
-                         # und greift intern auf x['user_info'] zu, wie in get_sql_chain definiert.
-        # Um die Fehlermeldung "Received: ['users']" zu berücksichtigen,
-        # stellen wir hier sicher, dass das Benutzer-Dictionary unter dem Schlüssel 'users' für den nächsten Schritt verfügbar ist.
-        users=lambda x: x['user_info'] # x['user_info'] ist hier user_info_dict
+        query=sql_chain,
+        users=lambda x: x['user_info']
     ).assign(
-      # x enthält nun 'users' (das user_info_dict), 'schema', 'query', und die ursprünglichen invoke-Schlüssel
-      response=lambda x: db.run(x["query"]),
-      # Flache Schlüssel aus dem 'users'-Dictionary für das Template extrahieren:
+      # WICHTIGE ÄNDERUNG: SQL-Query vor der Ausführung bereinigen
+      cleaned_query=lambda x: clean_sql_query(x["query"]),
+      response=lambda x: db.run(clean_sql_query(x["query"])),  # Bereinigte Query verwenden
       users_name=lambda x: x['users'].get('name', 'N/A'),
       users_city=lambda x: x['users'].get('city', 'N/A'),
       users_transport=lambda x: ", ".join(x['users'].get('transport', [])) if isinstance(x['users'].get('transport', []), list) else str(x['users'].get('transport', 'N/A')),
       users_preferences=lambda x: x['users'].get('preferences', 'N/A'),
-      users_budget=lambda x: str(x['users'].get('budget', '0.0')), # Sicherstellen, dass Budget ein String ist, falls es numerisch ist
-      users_as_string=lambda x: str(x['users']) # Das gesamte 'users'-Dictionary als String
+      users_budget=lambda x: str(x['users'].get('budget', '0.0')),
+      users_as_string=lambda x: str(x['users'])
     )
     | prompt_final_response
     | llm
@@ -181,7 +197,7 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_nam
   return chain.invoke({
     "question": user_query,
     "chat_history": chat_history,
-    "user_info": user_info_dict, # Dieser Schlüssel 'user_info' wird von der sql_chain und dem ersten .assign() oben (users=lambda x: x['user_info']) erwartet
+    "user_info": user_info_dict,
     "model_name": model_name
   })
 
@@ -214,7 +230,7 @@ if __name__ == "__main__":
             print("FEHLER: OPENAI_API_KEY nicht gefunden. Bitte in .env Datei setzen.")
         else:
             try:
-                response = get_response(test_user_query, db_instance, test_chat_history, "gpt-3.5-turbo", test_user_info)
+                response = get_response(test_user_query, db_instance, test_chat_history, "gpt-4o", test_user_info)
                 print("\nAntwort vom Backend:")
                 print(response)
             except Exception as e:
