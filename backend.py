@@ -30,28 +30,38 @@ def init_database() -> SQLDatabase:
   return SQLDatabase.from_uri(db_uri)
 
 
-def get_sql_chain(db: SQLDatabase):
+def get_sql_chain(db: SQLDatabase, model_name: str):
   """
   Erstellt eine Langchain-Kette (Chain) zur Generierung von SQL-Abfragen.
 
   Args:
     db: Das SQLDatabase-Objekt.
+    model_name: Das zu verwendende KI-Modell.
 
   Returns:
     Eine Langchain-Kette, die SQL-Abfragen generiert.
   """
   # Hier definieren wir eine Vorlage {template} für den Chatbot:
   # Der Chatbot soll auf Basis der existierenden Datenbankstruktur {schema} SQL-Abfragen generieren.
-  # Beispiele haben UserId. Neue Funktion Erstellen und im beispielen ändern
+  # user_info wird als Dictionary erwartet.
+  # template = """
+  #   You are an AI assistant specialized in helping users with their grocery shopping for cooking recipes.
+  #   Based on the provided database schema, the user's question, and their profile information (user_info: {user_info}), write a SQL query to find the necessary information.
+  #   The user will typically mention a recipe or a list of ingredients. Your primary goal is to find where these ingredients can be purchased, ideally at the best price, considering supermarkets in the user's city (user_info['city']).
+  #   If user_info['preferences'] contains 'Bio' or 'organic', prioritize organic products.
+  #   If user_info['budget'] is relevant, consider it.
 
-  # User's Profile Information (if available):
-  #   User City: {user_city}
-  #   User Transport Mode: {user_transport_mode}
-  #   User Shopping Goal: {user_goal}
+  #   <SCHEMA>{schema}</SCHEMA>
 
+  #   Conversation History: {chat_history}
+  #   User Info: {user_info}
+  #   User's Question: {question}
+
+  #   Write only the SQL query and nothing else. Do not wrap the SQL query in any other text, not even backticks.
+  #   """
   template = """
     You are an AI assistant specialized in helping users with their grocery shopping for cooking recipes.
-    Based on the provided database schema, the user's question, and their profile information (especially their city, transport preferences, and shopping goals like 'bio' or 'budget'), write a SQL query to find the necessary information.
+    Based on the provided database schema, the user's question, and their profile information (especially their city: {user_city}, transport preferences: {user_transport_mode}, and shopping goals like '{user_goal}'), write a SQL query to find the necessary information.
     The user will typically mention a recipe or a list of ingredients. Your primary goal is to find where these ingredients can be purchased, ideally at the best price, considering supermarkets in the user's city.
 
     <SCHEMA>{schema}</SCHEMA>
@@ -59,13 +69,14 @@ def get_sql_chain(db: SQLDatabase):
     Guidelines for SQL Query Generation:
     1.  Prioritize finding products (`ProductName`) mentioned by the user from the `Products` table.
     2.  Compare prices (`Price`) across different supermarkets (`Supermarkets`).
-    3.  Filter supermarkets to be in the user's city (`UserInfo.City` = `Supermarkets.City`).
-    4.  If the user mentions preferences like "Bio" or "nachhaltig" (check `UserInfo.Goal` or the question), try to filter `Products` using `Category` or `ProductName LIKE '%Bio%'`.
+    3.  Filter supermarkets to be in the user's city. For example, if user_city is 'Berlin', use `WHERE Supermarkets.City = 'Berlin'`.
+    4.  If the user mentions preferences like "Bio" or "nachhaltig" (check user_goal or the question), try to filter `Products` using `Category` or `ProductName LIKE '%Bio%'`.
     5.  If multiple ingredients are requested for a recipe, you might need to query for each or structure the query to show options per ingredient. Sometimes, finding all ingredients in one store is preferred, other times the cheapest option per ingredient across multiple stores is better. Use the context.
-    6.  Assume a specific `UserID` is provided or can be inferred for accessing `UserInfo`.
+    6.  Assume a specific `UserID` is provided or can be inferred for accessing `UserInfo` (though `UserInfo` table itself is not directly used for filtering products here, but general user context).
 
     Conversation History: {chat_history}
     User's Question: {question}
+    User Info: {user_info} # Full user_info dictionary for context
 
     Write only the SQL query and nothing else. Do not wrap the SQL query in any other text, not even backticks.
 
@@ -91,27 +102,32 @@ def get_sql_chain(db: SQLDatabase):
   # Die Vorlage wird als ChatPromptTemplate gespeichert.
   prompt = ChatPromptTemplate.from_template(template)
   
-  # Wir verwenden OpenAI (GPT-4o) als KI-Modell.
+  # Wir verwenden das übergebene KI-Modell.
   # Stellen Sie sicher, dass der OPENAI_API_KEY in Ihrer .env-Datei oder Umgebungsvariablen gesetzt ist.
-  llm = ChatOpenAI(model="gpt-4o")
+  llm = ChatOpenAI(model=model_name)
   
   # Diese kleine Funktion holt das Schema der aktuellen Datenbank.
   def get_schema(_):
     return db.get_table_info()
   
   # Die Chain wird zusammengebaut:
-  # - Wir starten mit dem Bezug des Schemas der Datenbank über die Funktion get_schema.
-  # - Dann wird daraus ein Prompt erstellt.
-  # - Der Prompt wird ans Sprachmodell geschickt.
-  # - Die Antwort wird als einfacher String geparst.
+  # RunnablePassthrough.assign nimmt die Eingabe der Kette (ein Dictionary)
+  # und fügt neue Schlüssel hinzu oder überschreibt vorhandene.
+  # Die Lambdas erhalten das Eingabe-Dictionary x.
   return (
-    RunnablePassthrough.assign(schema=get_schema)
-    | prompt
+    RunnablePassthrough.assign(
+        schema=get_schema, # Fügt den Datenbankschema hinzu
+        # Extrahiert spezifische User-Infos für den Prompt; user_info selbst ist schon im Input-Dict
+        user_city=lambda x: x['user_info'].get('city', 'Unknown'),
+        user_transport_mode=lambda x: ", ".join(x['user_info'].get('transport', [])) if isinstance(x['user_info'].get('transport', []), list) else x['user_info'].get('transport', 'Unknown'),
+        user_goal=lambda x: x['user_info'].get('preferences', 'Unknown') # Annahme: 'preferences' mappt zu 'goal'
+    )
+    | prompt # Erhält das Dictionary mit schema, user_city, user_transport_mode, user_goal und den ursprünglichen Eingaben
     | llm
     | StrOutputParser()
   )
 
-def get_response(user_query: str, db: SQLDatabase, chat_history: list):
+def get_response(user_query: str, db: SQLDatabase, chat_history: list, model_name: str, user_info: dict):
   """
   Generiert eine vollständige, natürliche Antwort für den Benutzer.
 
@@ -119,33 +135,39 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list):
     user_query: Die Frage des Benutzers.
     db: Das SQLDatabase-Objekt.
     chat_history: Die bisherige Konversationshistorie.
+    model_name: Das zu verwendende KI-Modell (z.B. "gpt-3.5-turbo" oder "gpt-4").
+    user_info: Ein Dictionary mit Benutzerinformationen.
 
   Returns:
     Eine textuelle Antwort für den Benutzer.
   """
   # Zuerst holen wir uns die SQL-Chain (also die Chain, die SQL-Queries generiert)
-  sql_chain = get_sql_chain(db)
+  # model_name und user_info werden hier benötigt, damit sql_chain sie verwenden kann
+  sql_chain = get_sql_chain(db, model_name) # user_info wird implizit durch den invoke Aufruf weitergegeben
   
   # In diesem Prompt-Template geht es nicht mehr darum, eine SQL-Abfrage zu erstellen, sondern darum, 
   # eine nette, natürliche Antwort in Textform zu formulieren.
-
-  # User's Profile (if available):
-  #   User City: {user_city}
-  #   User Transport Mode: {user_transport_mode}
-  #   User Shopping Goal: {user_goal}
-  #   Budget: {user_budget}
 
   template = """
     You are a friendly and helpful AI assistant for cooking and grocery shopping, communicating in German with a Swabian accent.
     Your goal is to provide comprehensive feedback to the user about their recipe inquiry. This includes:
     1.  Listing the required ingredients.
-    2.  Identifying where these ingredients can be purchased most affordably, by comparing supermarkets in the user's vicinity (city).
-    3.  Suggesting the "best way" to get to one or more supermarkets, considering the user's stated transport preferences and other parameters (e.g., budget, desire for organic products, accessibility needs if mentioned).
+    2.  Identifying where these ingredients can be purchased most affordably, by comparing supermarkets in the user's vicinity (user_info['city']).
+    3.  Suggesting the "best way" to get to one or more supermarkets, considering the user's stated transport preferences (user_info['transport']) and other parameters (e.g., budget from user_info['budget'], desire for organic products from user_info['preferences'], accessibility needs if mentioned).
 
     You have been provided with the user's question, the SQL query you generated, and the results from the database. You also have access to the user's profile information.
 
     Database Schema (for context, you don't write SQL here):
     <SCHEMA>{schema}</SCHEMA>
+
+    User's Profile:
+    Name: {user_info[name]}
+    City: {user_info[city]}
+    Transport Options: {user_info[transport]}
+    Preferences / Allergies: {user_info[preferences]}
+    Budget: {user_info[budget]} €
+    Full User Info (for AI context): {user_info}
+
 
     User's Original Question: {question}
 
@@ -172,7 +194,7 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list):
     -   **Actionable Advice:** End with a helpful summary or next step.
 
     Beispiel für eine gute Antwortstruktur:
-    "Hallo [User-Vorname, falls bekannt]!
+    "Hallo {user_info[name]}!
     Für dein Rezept '[Rezeptname]' habe ich folgende Informationen gefunden:
 
     **Zutaten und Preise:**
@@ -183,11 +205,11 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list):
         * Am günstigsten bei [Supermarkt C] ([Adresse C]) für [Preis] €.
 
     **Meine Empfehlung für dich:**
-    Da du [TransportMode, z.B. 'mit dem Fahrrad unterwegs bist und nicht weit fahren möchtest / ein Auto hast'], empfehle ich dir:
+    Da du z.B. '{user_info[transport]}' nutzt, empfehle ich dir:
     * Option 1: Wenn du alles in einem Laden kaufen möchtest, wäre [Supermarkt X] eine gute Wahl, dort bekommst du [Zutatenliste] für insgesamt [Gesamtpreis, falls sinnvoll].
-    * Option 2: Um maximal zu sparen, könntest du [Zutat 1] bei [Supermarkt A] und [Zutat 2] bei [Supermarkt C] kaufen. [Supermarkt A] in der [Straße A] ist [Hinweis zur Erreichbarkeit, z.B. 'nur 5 Minuten zu Fuß von deiner angegebenen Adresse entfernt' - falls ableitbar, sonst allgemeiner]. [Supermarkt C] erreichst du gut [Hinweis basierend auf TransportMode].
+    * Option 2: Um maximal zu sparen, könntest du [Zutat 1] bei [Supermarkt A] und [Zutat 2] bei [Supermarkt C] kaufen. [Supermarkt A] in der [Straße A] ist [Hinweis zur Erreichbarkeit]. [Supermarkt C] erreichst du gut [Hinweis basierend auf TransportMode].
 
-    Beachte auch dein Ziel '[User Goal, z.B. nur Bio kaufen]': Die genannten Produkte von [Supermarkt A] sind als Bio gekennzeichnet.
+    Beachte auch dein Ziel '{user_info[preferences]}': Die genannten Produkte von [Supermarkt A] sind als Bio gekennzeichnet. Dein Budget liegt bei {user_info[budget]}€.
 
     Lass mich wissen, wenn du weitere Fragen hast!"
 
@@ -196,24 +218,34 @@ def get_response(user_query: str, db: SQLDatabase, chat_history: list):
   
   # Vorlage und Modell wieder vorbereiten
   prompt = ChatPromptTemplate.from_template(template)
-  # Stellen Sie sicher, dass der OPENAI_API_KEY in Ihrer .env-Datei oder Umgebungsvariablen gesetzt ist.
-  llm = ChatOpenAI(model="gpt-4o")
+  # Das übergebene KI-Modell wird verwendet.
+  llm = ChatOpenAI(model=model_name)
   
   # Chain wird hier zusammengebaut:
+  # Die Eingabe für diese Kette ist das Dictionary von chain.invoke().
+  # sql_chain erhält dieses Dictionary ebenfalls.
+  # user_info und model_name sind also im Kontext für alle Teile der Kette verfügbar,
+  # die sie aus dem weitergegebenen Dictionary lesen.
   chain = (
-    RunnablePassthrough.assign(query=sql_chain).assign(
-      schema=lambda _: db.get_table_info(),
-      response=lambda vars_dict: db.run(vars_dict["query"]), # vars_dict statt vars, um Konflikte zu vermeiden
+    RunnablePassthrough.assign(
+        schema=lambda _: db.get_table_info(),
+        query=sql_chain, # sql_chain erhält das input dict {question, chat_history, user_info, model_name}
+        user_info=lambda x: x['user_info'] # Stellt sicher, dass user_info für den finalen Prompt explizit verfügbar ist
+    ).assign(
+      response=lambda x: db.run(x["query"]), # x enthält hier query, schema, user_info und die ursprünglichen inputs
     )
-    | prompt
+    | prompt # prompt erhält das dict mit question, chat_history, user_info, model_name, query, schema, response
     | llm
     | StrOutputParser()
   )
   
   # Die Chain wird "angestoßen" (invoke) und liefert eine Antwort zurück.
+  # Alle für die Templates benötigten Schlüssel müssen hier übergeben werden.
   return chain.invoke({
     "question": user_query,
     "chat_history": chat_history,
+    "user_info": user_info, 
+    "model_name": model_name 
   })
 
 # Beispielhafte Nutzung (optional, für direktes Testen des Backends)
@@ -226,7 +258,8 @@ if __name__ == "__main__":
     load_dotenv()
 
     try:
-        db_instance = init_database("AngeBot")
+        # db_instance = init_database("AngeBot") # init_database nimmt keinen Namen mehr an
+        db_instance = init_database()
         print("Datenbank initialisiert.")
         
         # Test-Schema abrufen
@@ -235,12 +268,22 @@ if __name__ == "__main__":
         # Test-Chat-Historie
         test_chat_history = [
             AIMessage(content="Hallo! Ich bin ein SQL-Assistent. Frag mich etwas über deine Datenbank."),
-            HumanMessage(content="Welche Künstler gibt es?")
+            HumanMessage(content="Welche Künstler gibt es?") # Irrelevante Historie für den Testfall
         ]
         
         # Test-Abfrage
-        test_user_query = "Nenne mir 5 Künstler."
+        test_user_query = "Ich brauche Zutaten für Spaghetti Carbonara. Wo finde ich das am günstigsten?"
         print(f"\nTestfrage: {test_user_query}")
+
+        # Beispiel user_info für den Test
+        test_user_info = {
+            "name": "Max Mustermann",
+            "city": "Berlin",
+            "preferences": "Bio", # z.B. 'Bio', 'preisgünstig', 'vegan'
+            "transport": ["Auto", "Fahrrad"], # Liste von Strings
+            "age": 30,
+            "budget": 50.0
+        }
         
         # Antwort generieren
         # Überprüfen, ob der OPENAI_API_KEY geladen wurde
@@ -249,7 +292,8 @@ if __name__ == "__main__":
             print("FEHLER: OPENAI_API_KEY nicht gefunden. Bitte in .env Datei setzen.")
         else:
             try:
-                response = get_response(test_user_query, db_instance, test_chat_history)
+                # model_name hier als Beispiel "gpt-3.5-turbo" oder "gpt-4" verwenden
+                response = get_response(test_user_query, db_instance, test_chat_history, "gpt-3.5-turbo", test_user_info)
                 print("\nAntwort vom Backend:")
                 print(response)
             except Exception as e:
