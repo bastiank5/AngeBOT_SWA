@@ -46,7 +46,7 @@ if "page" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "model_name" not in st.session_state:
-    st.session_state.model_name = "gpt-3.5-turbo"
+    st.session_state.model_name = "gpt-4o"
 if "db" not in st.session_state: # Initialize db, assuming it's handled elsewhere
     st.session_state.db = None
 
@@ -128,14 +128,7 @@ def personal_info_page():
 def chatbot_page():
     st.title("AngeBOT: What would you like to cook today?")
 
-    # Sidebar for model selection
-    with st.sidebar:
-        st.subheader("Model Selection")
-        st.session_state.model_name = st.selectbox(
-            "Choose AI Model",
-            ("gpt-3.5-turbo", "gpt-4"),
-            index=("gpt-3.5-turbo", "gpt-4").index(st.session_state.model_name) # set default from session state
-        )
+
 
     for message in st.session_state.chat_history:
         if isinstance(message, AIMessage): # Backward compatibility
