@@ -3,6 +3,12 @@ from langchain_core.messages import AIMessage, HumanMessage
 from dotenv import load_dotenv
 import sqlite3
 
+try:
+    from backend import init_database, get_response
+except ImportError:
+    st.error("Fehler: backend.py konnte nicht gefunden werden. Stellen Sie sicher, dass sich die Datei im selben Verzeichnis befindet.")
+    st.stop() 
+
 st.set_page_config(page_title="AngeBOT", page_icon="🛒")
 load_dotenv()
 
@@ -22,6 +28,9 @@ cursor.execute("""
     )
 """)
 conn.commit()
+
+st.session_state.db = init_database()
+st.success(f"Erfolgreich mit 'AngeBot.db' verbunden!")
 
 # === SESSION INIT ===
 if "page" not in st.session_state:
@@ -116,18 +125,33 @@ def chatbot_page():
                 st.markdown(message.content)
 
     user_query = st.chat_input("Tell me what you want to cook...")
-    if user_query:
+    if user_query is not None and user_query.strip() != "":
+    # Neue Benutzereingabe zur Chat-Historie hinzufügen
         st.session_state.chat_history.append(HumanMessage(content=user_query))
-
-        with st.chat_message("Human"):
-            st.markdown(user_query)
-
-        response = f"To cook '{user_query}', you will need: tomatoes, pasta, cheese. You can buy these at REWE or Edeka in {st.session_state.user_info.get('city', 'your area')}"
-
-        with st.chat_message("AI"):
-            st.markdown(response)
-
-        st.session_state.chat_history.append(AIMessage(content=response))
+    
+    with st.chat_message("Human", avatar="👤"):
+        st.markdown(user_query)
+        
+    # Prüfen, ob eine Datenbankverbindung besteht
+    if st.session_state.db is not None:
+        with st.chat_message("AI", avatar="🤖"):
+            with st.spinner("Denke nach..."):
+                try:
+                    # Antwort auf Benutzereingabe holen und anzeigen (über Backend-Funktion)
+                    response = get_response(user_query, st.session_state.db, st.session_state.chat_history)
+                    st.markdown(response)
+                    # Antwort auch zur Chat-Historie hinzufügen
+                    st.session_state.chat_history.append(AIMessage(content=response))
+                except Exception as e:
+                    error_message = f"Entschuldigung, es ist ein Fehler aufgetreten: {e}"
+                    st.error(error_message)
+                    st.session_state.chat_history.append(AIMessage(content=error_message))
+    else:
+        # Fehlermeldung, wenn keine Datenbankverbindung besteht
+        no_db_message = "Bitte verbinden Sie sich zuerst mit einer Datenbank über die Seitenleiste."
+        with st.chat_message("AI", avatar="🤖"):
+            st.warning(no_db_message)
+        st.session_state.chat_history.append(AIMessage(content=no_db_message))
 
 
 # === DESIGN THEME (Pizza Background) ===
