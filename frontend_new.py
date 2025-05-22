@@ -7,7 +7,7 @@ st.set_page_config(page_title="AngeBOT", page_icon="🛒")
 load_dotenv()
 
 # === SQLite INIT ===
-conn = sqlite3.connect("users.db", check_same_thread=False)
+conn = sqlite3.connect("AngeBot.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
