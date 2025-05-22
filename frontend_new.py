@@ -2,15 +2,23 @@ import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 from dotenv import load_dotenv
 import sqlite3
-
-try:
-    from backend import init_database, get_response
-except ImportError:
-    st.error("Fehler: backend.py konnte nicht gefunden werden. Stellen Sie sicher, dass sich die Datei im selben Verzeichnis befindet.")
-    st.stop() 
+from backend import get_response, init_database
 
 st.set_page_config(page_title="AngeBOT", page_icon="🛒")
 load_dotenv()
+
+# === DATABASE INITIALIZATION ===
+# Initialize db using the function from backend.py
+# This should be done once, ideally when the session starts.
+if "db" not in st.session_state or st.session_state.db is None:
+    try:
+        st.session_state.db = init_database() # Call init_database here
+        # You might want to add a log or a success message here for debugging
+        # st.toast("Datenbank erfolgreich initialisiert!")
+    except Exception as e:
+        st.error(f"Fehler bei der Datenbankinitialisierung: {e}")
+        # Stop the app or handle the error as appropriate
+        st.stop()
 
 # === SQLite INIT ===
 conn = sqlite3.connect("AngeBot.db", check_same_thread=False)
@@ -37,6 +45,10 @@ if "page" not in st.session_state:
     st.session_state.page = "auth"
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "model_name" not in st.session_state:
+    st.session_state.model_name = "gpt-3.5-turbo"
+if "db" not in st.session_state: # Initialize db, assuming it's handled elsewhere
+    st.session_state.db = None
 
 # === AUTHENTICATION PAGE ===
 def auth_page():
@@ -116,10 +128,22 @@ def personal_info_page():
 def chatbot_page():
     st.title("AngeBOT: What would you like to cook today?")
 
+    # Sidebar for model selection
+    with st.sidebar:
+        st.subheader("Model Selection")
+        st.session_state.model_name = st.selectbox(
+            "Choose AI Model",
+            ("gpt-3.5-turbo", "gpt-4"),
+            index=("gpt-3.5-turbo", "gpt-4").index(st.session_state.model_name) # set default from session state
+        )
+
     for message in st.session_state.chat_history:
-        if isinstance(message, AIMessage):
+        if isinstance(message, AIMessage): # Backward compatibility
             with st.chat_message("AI"):
                 st.markdown(message.content)
+        elif isinstance(message, dict) and message.get("role") == "ai": # New AI message format
+            with st.chat_message(f"AI ({message.get('model_name', 'N/A')})"):
+                st.markdown(message["content"])
         elif isinstance(message, HumanMessage):
             with st.chat_message("Human"):
                 st.markdown(message.content)
@@ -128,30 +152,28 @@ def chatbot_page():
     if user_query is not None and user_query.strip() != "":
     # Neue Benutzereingabe zur Chat-Historie hinzufügen
         st.session_state.chat_history.append(HumanMessage(content=user_query))
-    
-    with st.chat_message("Human", avatar="👤"):
-        st.markdown(user_query)
-        
-    # Prüfen, ob eine Datenbankverbindung besteht
-    if st.session_state.db is not None:
-        with st.chat_message("AI", avatar="🤖"):
-            with st.spinner("Denke nach..."):
-                try:
-                    # Antwort auf Benutzereingabe holen und anzeigen (über Backend-Funktion)
-                    response = get_response(user_query, st.session_state.db, st.session_state.chat_history)
-                    st.markdown(response)
-                    # Antwort auch zur Chat-Historie hinzufügen
-                    st.session_state.chat_history.append(AIMessage(content=response))
-                except Exception as e:
-                    error_message = f"Entschuldigung, es ist ein Fehler aufgetreten: {e}"
-                    st.error(error_message)
-                    st.session_state.chat_history.append(AIMessage(content=error_message))
-    else:
-        # Fehlermeldung, wenn keine Datenbankverbindung besteht
-        no_db_message = "Bitte verbinden Sie sich zuerst mit einer Datenbank über die Seitenleiste."
-        with st.chat_message("AI", avatar="🤖"):
-            st.warning(no_db_message)
-        st.session_state.chat_history.append(AIMessage(content=no_db_message))
+
+        with st.chat_message("Human"):
+            st.markdown(user_query)
+
+        # Call get_response with model_name and user_info
+        response = get_response(
+            user_query,
+            st.session_state.db, # Assuming this will be the SQLDatabase object
+            st.session_state.chat_history,
+            st.session_state.model_name,
+            st.session_state.user_info # Pass user_info here
+        )
+
+        ai_response_data = {
+            "role": "ai",
+            "content": response,
+            "model_name": st.session_state.model_name
+        }
+        st.session_state.chat_history.append(ai_response_data)
+
+        with st.chat_message(f"AI ({st.session_state.model_name})"):
+            st.markdown(response)
 
 
 # === DESIGN THEME (Pizza Background) ===
